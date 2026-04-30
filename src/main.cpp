@@ -1,5 +1,6 @@
 #include "raylib.h"
 #include <vector>
+#include <algorithm>
 using namespace std;
 
 const int SCREEN_WIDTH = 900;
@@ -11,7 +12,14 @@ struct Brick
     Rectangle rect;
     bool alive;
 };
+//adding particles 
 
+struct Particle
+{
+    Vector2 pos; 
+    Vector2 velocity; 
+    float life; 
+}; 
 struct Paddle
 {
     Rectangle rect; 
@@ -19,7 +27,7 @@ struct Paddle
     void Update(float dt)
     {
         if(IsKeyDown(KEY_LEFT))
-            rect.x -= speed*dt; 
+            rect.x -= speed*dt;
         if(IsKeyDown(KEY_RIGHT))
             rect.x += speed*dt; 
         
@@ -53,13 +61,13 @@ struct Ball
         
         if(position.y - radius < 0)
             velocity.y *= -1;
-
     }
 
     void Draw()
     {
         DrawCircleV(position, radius, WHITE);
     }
+
     void Reset()
     {
         position = {SCREEN_WIDTH / 2.0f, SCREEN_HEIGHT / 2.0f};
@@ -67,6 +75,14 @@ struct Ball
     }
 }; 
 
+// Game states enum
+enum GameState
+{
+    MENU,
+    PLAYING,
+    GAMEOVER,
+    WIN
+}; 
 
 int main()
 {
@@ -82,6 +98,7 @@ int main()
     ball.radius = 10; 
     ball.Reset(); 
     vector<Brick> bricks; 
+    vector<Particle> particles; 
 
     int rows = 5; 
     int cols = 10; 
@@ -101,7 +118,7 @@ int main()
                 brickWidth, 
                 brickHeight
             };
-            brick.alive = true; 
+            brick.alive = true;
             bricks.push_back(brick); 
             
         }
@@ -109,74 +126,156 @@ int main()
 
     int lives = 3; 
     int score = 0; 
+    GameState gameState = MENU;
 
     while(!WindowShouldClose())
     {
-        float dt = GetFrameTime(); 
-
-        //update 
-        paddle.Update(dt);
-        ball.Update(dt); 
-
-        //ball paddle collision 
-
-        if(CheckCollisionCircleRec(ball.position, ball.radius, paddle.rect))
+        float dt = GetFrameTime();
+        
+        // Handle menu input
+        if(gameState == MENU)
         {
-            
-            ball.position.y = paddle.rect.y - ball.radius;
-            ball.velocity.y *= -1;
-
-            //add angle control 
-            float paddleCenter = paddle.rect.x + paddle.rect.width / 2.0f; 
-
-            float distance = (ball.position.x - paddleCenter) / (paddle.rect.width / 2.0f);
-            ball.velocity.x = 350.0f * distance;
-
-        }
-
-        //ball brick collision 
-
-        for(auto&brick : bricks)
-        {
-            if(brick.alive && CheckCollisionCircleRec(ball.position, ball.radius, brick.rect))
+            if(IsKeyPressed(KEY_ENTER))
             {
-                brick.alive = false; 
-                ball.velocity.y *= -1; 
-                score += 100; 
-                break;
+                gameState = PLAYING;
             }
         }
 
-        //miss ball 
-        if(ball.position.y - ball.radius > SCREEN_HEIGHT)
+        // Update game objects
+        if(gameState == PLAYING)
         {
-            lives--;
-            ball.Reset();
-        } 
+            paddle.Update(dt);
+            ball.Update(dt);
 
-        BeginDrawing();
+            // Update particles
+            for(auto&p : particles)
+            {
+                p.pos.x += p.velocity.x * dt; 
+                p.pos.y += p.velocity.y * dt; 
+                p.life -= dt; 
+            }
+            // Remove dead particles
+            particles.erase(
+            remove_if(particles.begin(), particles.end(),
+            [](Particle &p){ return p.life <= 0; }),
+            particles.end()
+            );
+            // Ball-paddle collision
+            if(CheckCollisionCircleRec(ball.position, ball.radius, paddle.rect))
+            {
+                ball.position.y = paddle.rect.y - ball.radius;
+                ball.velocity.y *= -1;
 
-        ClearBackground(BLACK);
+                // Add angle control based on paddle position
+                float paddleCenter = paddle.rect.x + paddle.rect.width / 2.0f; 
+                float distance = (ball.position.x - paddleCenter) / (paddle.rect.width / 2.0f);
+                ball.velocity.x = 350.0f * distance;
+            }
 
-        paddle.Draw();
-        ball.Draw();
-        for(auto &brick: bricks)
-        {
-            if(brick.alive)
-                DrawRectangleRec(brick.rect, WHITE); 
+            // Ball-brick collision
+            for(auto& brick : bricks)
+            {
+                if(brick.alive && CheckCollisionCircleRec(ball.position, ball.radius, brick.rect))
+                {
+                    brick.alive = false; 
+                    ball.velocity.y *= -1; 
+                    score += 100; 
+
+                    //spawn particles
+                    for(int i = 0; i < 10; i++)
+                    {
+                        Particle p; 
+                        p.pos = ball.position; 
+                        p.velocity = {
+                            (float)(GetRandomValue(-200, 200)),
+                            (float)(GetRandomValue(-200, 200))
+                        }; 
+                        p.life = 1.0f; 
+                        particles.push_back(p);
+
+                    }
+                    break;
+                }
+            }
+
+            // Check win condition
+            bool allDestroyed = true; 
+            for(auto& brick : bricks)
+            {
+                if(brick.alive)
+                {
+                    allDestroyed = false; 
+                    break;
+                }
+            }
+            if(allDestroyed)
+            {
+                gameState = WIN; 
+            }
+
+            // Check if ball is missed
+            if(ball.position.y - ball.radius > SCREEN_HEIGHT)
+            {
+                lives--;
+                if(lives <= 0)
+                {
+                    gameState = GAMEOVER;
+                }
+                ball.Reset();
+            }
         }
 
-        DrawText(
-            TextFormat("Lives: %i", lives),
-            20,20,30,WHITE
-        );
-        DrawText(
-            TextFormat("Score: %i",score),
-            700,20,30,WHITE
-        );
+        // Reset game
+        if((gameState == WIN || gameState == GAMEOVER) && IsKeyPressed(KEY_R))
+        {
+            lives = 3;
+            score = 0;
+            for(auto& brick : bricks)
+            {
+                brick.alive = true;
+            }
+            ball.Reset();
+            gameState = MENU;
+        }
+
+        // Draw everything
+        BeginDrawing();
+        ClearBackground(BLACK);
+
+        // Draw game objects
+        paddle.Draw();
+        ball.Draw();
+        for(auto& brick : bricks)
+        {
+            if(brick.alive)
+            {
+                DrawRectangleRec(brick.rect, WHITE); 
+            }
+        }
+        //Draw particles
+        for(auto&p : particles)
+        {
+            DrawCircleV(p.pos,3,WHITE);
+        }
+        // Draw UI
+        DrawText(TextFormat("Lives: %i", lives), 20, 20, 30, WHITE);
+        DrawText(TextFormat("Score: %i", score), 700, 20, 30, WHITE);
+
+        // Draw game state messages
+        if(gameState == MENU)
+        {
+            DrawText("PRESS ENTER TO START", 220, 300, 40, WHITE);
+        }
+        if(gameState == GAMEOVER)
+        {
+            DrawText("GAME OVER", 320, 300, 50, WHITE);
+        }
+        if(gameState == WIN)
+        {
+            DrawText("YOU WIN!", 330, 300, 50, WHITE);
+        }
 
         EndDrawing();
-
     }
     CloseWindow();
 
